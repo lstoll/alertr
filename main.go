@@ -20,7 +20,7 @@ var httpcli = &http.Client{
 
 func main() {
 	var (
-		webhook   = flag.String("webhook", ("SLACK_WEBHOOK_URL"), "Slack webhook URL")
+		webhook   = flag.String("webhook", os.Getenv("SLACK_WEBHOOK_URL"), "Slack webhook URL")
 		channel   = flag.String("channel", os.Getenv("SLACK_CHANNEL"), "Channel to notify")
 		mention   = flag.String("mention", os.Getenv("MENTION"), "Who to mention in the message")
 		endpoints = flag.String("endpoints", os.Getenv("ENDPOINTS"), "URLs to monitor")
@@ -96,7 +96,7 @@ func slackNotify(webhookUrl, channel, msg string) error {
 	if err != nil {
 		return xerrors.Errorf("couldn't marshal message: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, webhookUrl+"?link_names=1", bytes.NewBuffer(slackBody))
+	req, err := http.NewRequest(http.MethodPost, webhookUrl, bytes.NewBuffer(slackBody))
 	if err != nil {
 		return xerrors.Errorf("failed creating HTTP request: %w", err)
 	}
