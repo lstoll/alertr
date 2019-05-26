@@ -52,16 +52,43 @@ func main() {
 	}
 }
 
-type slackPayload struct {
-	IconEmoji string `json:"icon_emoji,omitempty"`
-	Channel   string `json:"channel,omitempty"`
-	Text      string `json:"text,omitempty"`
-	LinkNames bool   `json:link_names,omitempty`
+// slackReq is the request for sending a slack notification.
+type slackReq struct {
+	Channel     string            `json:"channel,omitempty"`
+	Username    string            `json:"username,omitempty"`
+	IconEmoji   string            `json:"icon_emoji,omitempty"`
+	IconURL     string            `json:"icon_url,omitempty"`
+	LinkNames   bool              `json:"link_names,omitempty"`
+	Attachments []slackAttachment `json:"attachments"`
+}
+
+// slackAttachment is used to display a richly-formatted message block.
+type slackAttachment struct {
+	Title      string `json:"title,omitempty"`
+	TitleLink  string `json:"title_link,omitempty"`
+	Pretext    string `json:"pretext,omitempty"`
+	Text       string `json:"text"`
+	Fallback   string `json:"fallback"`
+	CallbackID string `json:"callback_id"`
+	// Fields     []config.SlackField  `json:"fields,omitempty"`
+	// Actions    []config.SlackAction `json:"actions,omitempty"`
+	ImageURL string `json:"image_url,omitempty"`
+	ThumbURL string `json:"thumb_url,omitempty"`
+	Footer   string `json:"footer"`
+
+	Color    string   `json:"color,omitempty"`
+	MrkdwnIn []string `json:"mrkdwn_in,omitempty"`
 }
 
 func slackNotify(webhookUrl, channel, msg string) error {
-	pl := slackPayload{
-		Text:      msg,
+	pl := slackReq{
+		Channel: channel,
+		Attachments: []slackAttachment{
+			{
+				Text:  msg,
+				Color: "danger",
+			},
+		},
 		LinkNames: true,
 	}
 
@@ -69,7 +96,7 @@ func slackNotify(webhookUrl, channel, msg string) error {
 	if err != nil {
 		return xerrors.Errorf("couldn't marshal message: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, webhookUrl, bytes.NewBuffer(slackBody))
+	req, err := http.NewRequest(http.MethodPost, webhookUrl+"?link_names=1", bytes.NewBuffer(slackBody))
 	if err != nil {
 		return xerrors.Errorf("failed creating HTTP request: %w", err)
 	}
