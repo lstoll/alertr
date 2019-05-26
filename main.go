@@ -82,7 +82,9 @@ type slackAttachment struct {
 
 func slackNotify(webhookUrl, channel, msg string) error {
 	pl := slackReq{
-		Channel: channel,
+		Username:  "alertr",
+		IconEmoji: ":arrow_heading_down:",
+		Channel:   channel,
 		Attachments: []slackAttachment{
 			{
 				Text:  msg,
