@@ -10,8 +10,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"golang.org/x/xerrors"
 )
 
 var httpcli = &http.Client{
@@ -96,24 +94,24 @@ func slackNotify(webhookUrl, channel, msg string) error {
 
 	slackBody, err := json.Marshal(&pl)
 	if err != nil {
-		return xerrors.Errorf("couldn't marshal message: %w", err)
+		return fmt.Errorf("couldn't marshal message: %w", err)
 	}
 	req, err := http.NewRequest(http.MethodPost, webhookUrl, bytes.NewBuffer(slackBody))
 	if err != nil {
-		return xerrors.Errorf("failed creating HTTP request: %w", err)
+		return fmt.Errorf("failed creating HTTP request: %w", err)
 	}
 
 	req.Header.Add("Content-Type", "application/json")
 
 	resp, err := httpcli.Do(req)
 	if err != nil {
-		return xerrors.Errorf("failed posting webhook: %w", err)
+		return fmt.Errorf("failed posting webhook: %w", err)
 	}
 
 	buf := new(bytes.Buffer)
 	buf.ReadFrom(resp.Body)
 	if buf.String() != "ok" {
-		return xerrors.New("Non-ok response returned from Slack")
+		return fmt.Errorf("non-ok response returned from Slack")
 	}
 
 	return nil
