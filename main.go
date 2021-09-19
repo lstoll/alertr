@@ -6,22 +6,29 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"golang.org/x/net/proxy"
 )
 
-var httpcli = &http.Client{
+const defaultTestTimeout = 20 * time.Second
+
+var slackCli = &http.Client{
 	Timeout: time.Second * 30,
 }
 
 func main() {
 	var (
-		webhook   = flag.String("webhook", os.Getenv("SLACK_WEBHOOK_URL"), "Slack webhook URL")
-		channel   = flag.String("channel", os.Getenv("SLACK_CHANNEL"), "Channel to notify")
-		mention   = flag.String("mention", os.Getenv("MENTION"), "Who to mention in the message")
-		endpoints = flag.String("endpoints", os.Getenv("ENDPOINTS"), "URLs to monitor")
+		webhook     = flag.String("webhook", os.Getenv("SLACK_WEBHOOK_URL"), "Slack webhook URL")
+		channel     = flag.String("channel", os.Getenv("SLACK_CHANNEL"), "Channel to notify")
+		mention     = flag.String("mention", os.Getenv("MENTION"), "Who to mention in the message")
+		endpoints   = flag.String("endpoints", os.Getenv("ENDPOINTS"), "URLs to monitor")
+		testVia     = flag.String("test-via", os.Getenv("TEST_VIA"), "socks5 proxy to test via")
+		testTimeout = flag.String("test-timeout", os.Getenv("TEST_TIMEOUT"), "timeout for testing")
 	)
 	flag.Parse()
 
@@ -30,9 +37,32 @@ func main() {
 		log.Fatal("webhook and endpoints are required flags")
 	}
 
+	tt := defaultTestTimeout
+	if *testTimeout != "" {
+		var err error
+		tt, err = time.ParseDuration(*testTimeout)
+		if err != nil {
+			log.Fatalf("parsing duration %s: %v", *testTimeout, err)
+		}
+	}
+
+	testCli := &http.Client{Timeout: tt}
+
+	if *testVia != "" {
+		d := &net.Dialer{Timeout: tt}
+		sp, err := proxy.SOCKS5("tcp", *testVia, nil, d)
+		if err != nil {
+			log.Fatalf("creating SOCKS5 proxy to %s: %v", *testVia, err)
+		}
+
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.DialContext = (sp.(proxy.ContextDialer)).DialContext
+		testCli.Transport = tr
+	}
+
 	for _, ep := range strings.Split(*endpoints, ",") {
 		log.Printf("Checking %s", ep)
-		resp, err := httpcli.Get(ep)
+		resp, err := testCli.Get(ep)
 		if err != nil {
 			log.Printf("Error fetching %s: %v", ep, err)
 			if err := slackNotify(*webhook, *channel, fmt.Sprintf("%s Error fetching %s: %v", *mention, ep, err)); err != nil {
@@ -103,7 +133,7 @@ func slackNotify(webhookUrl, channel, msg string) error {
 
 	req.Header.Add("Content-Type", "application/json")
 
-	resp, err := httpcli.Do(req)
+	resp, err := slackCli.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed posting webhook: %w", err)
 	}
