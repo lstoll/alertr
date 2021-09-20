@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -46,36 +48,64 @@ func main() {
 		}
 	}
 
-	testCli := &http.Client{Timeout: tt}
+	clientFor := func(dialAddr string) *http.Client {
+		testCli := &http.Client{Timeout: tt}
 
-	if *testVia != "" {
-		d := &net.Dialer{Timeout: tt}
-		sp, err := proxy.SOCKS5("tcp", *testVia, nil, d)
-		if err != nil {
-			log.Fatalf("creating SOCKS5 proxy to %s: %v", *testVia, err)
+		if *testVia != "" {
+			d := &net.Dialer{Timeout: tt}
+			sp, err := proxy.SOCKS5("tcp", *testVia, nil, d)
+			if err != nil {
+				log.Fatalf("creating SOCKS5 proxy to %s: %v", *testVia, err)
+			}
+
+			tr := http.DefaultTransport.(*http.Transport).Clone()
+			tr.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (sp.(proxy.ContextDialer)).DialContext(ctx, network, dialAddr)
+			}
+			testCli.Transport = tr
 		}
 
-		tr := http.DefaultTransport.(*http.Transport).Clone()
-		tr.DialContext = (sp.(proxy.ContextDialer)).DialContext
-		testCli.Transport = tr
+		return testCli
 	}
 
-	for _, ep := range strings.Split(*endpoints, ",") {
-		log.Printf("Checking %s", ep)
-		resp, err := testCli.Get(ep)
+	eps, err := parseEndpoints(*endpoints)
+	if err != nil {
+		log.Fatalf("parsing endpoints: %v", err)
+	}
+
+	for _, ep := range eps {
+		log.Printf("Checking %s", ep.String())
+		req, err := http.NewRequest("GET", ep.url.String(), nil)
 		if err != nil {
-			log.Printf("Error fetching %s: %v", ep, err)
-			if err := slackNotify(*webhook, *channel, fmt.Sprintf("%s Error fetching %s: %v", *mention, ep, err)); err != nil {
-				log.Printf("Error posting webhook: %v", err)
-				continue
+			log.Fatalf("creating request: %v", err)
+		}
+		da := req.URL.Host
+		if ep.addr != "" {
+			p := req.URL.Port()
+			if p == "" {
+				if req.URL.Scheme == "https" {
+					p = "443"
+				} else {
+					p = "80"
+				}
+				da = net.JoinHostPort(ep.addr, p)
 			}
 		}
-		if resp.StatusCode >= 400 {
-			log.Printf("Error fetching %s: got status %d", ep, resp.StatusCode)
-			if err := slackNotify(*webhook, *channel, fmt.Sprintf("%s Error fetching %s, got status %d", *mention, ep, resp.StatusCode)); err != nil {
+		c := clientFor(da)
+		resp, err := c.Do(req)
+		if err != nil {
+			log.Printf("Error fetching %s: %v", ep.String(), err)
+			if err := slackNotify(*webhook, *channel, fmt.Sprintf("%s Error fetching %s: %v", *mention, ep.String(), err)); err != nil {
 				log.Printf("Error posting webhook: %v", err)
-				continue
 			}
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			log.Printf("Error fetching %s: got status %d", ep.String(), resp.StatusCode)
+			if err := slackNotify(*webhook, *channel, fmt.Sprintf("%s Error fetching %s, got status %d", *mention, ep.String(), resp.StatusCode)); err != nil {
+				log.Printf("Error posting webhook: %v", err)
+			}
+			continue
 		}
 	}
 }
@@ -145,4 +175,43 @@ func slackNotify(webhookUrl, channel, msg string) error {
 	}
 
 	return nil
+}
+
+type testEndpoint struct {
+	// url requested to test
+	url *url.URL
+	// addr to direct the request to
+	addr string
+}
+
+func (t *testEndpoint) String() string {
+	s := t.url.String()
+	if t.addr != "" {
+		s = s + " (addr: " + t.addr + ")"
+	}
+	return s
+}
+
+func parseEndpoints(f string) ([]testEndpoint, error) {
+	var ret []testEndpoint
+	for _, ep := range strings.Split(f, ",") {
+		sp := strings.Split(ep, ";")
+		if len(sp) < 1 || len(sp) > 2 {
+			return nil, fmt.Errorf("splitting %s on ; didn't give 1 or 2 results", ep)
+		}
+		u, err := url.Parse(sp[0])
+		if err != nil {
+			return nil, fmt.Errorf("parsing %s: %v", ep, err)
+		}
+		e := testEndpoint{url: u}
+		if len(sp) > 1 {
+			q, err := url.ParseQuery(sp[1])
+			if err != nil {
+				return nil, fmt.Errorf("parsing %s as query string: %v", sp[1], err)
+			}
+			e.addr = q.Get("addr")
+		}
+		ret = append(ret, e)
+	}
+	return ret, nil
 }
