@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenk/backoff"
 	"golang.org/x/net/proxy"
 )
 
@@ -92,7 +93,25 @@ func main() {
 			}
 		}
 		c := clientFor(da)
-		resp, err := c.Do(req)
+
+		var resp *http.Response
+
+		op := func() error {
+			r, err := c.Do(req)
+			if err != nil {
+				return err
+			}
+			resp = r
+			return nil
+		}
+
+		bo := backoff.NewExponentialBackOff()
+		bo.MaxElapsedTime = 30 * time.Second
+
+		err = backoff.Retry(op, bo)
+		if err == nil && resp == nil {
+			err = fmt.Errorf("nil err and response")
+		}
 		if err != nil {
 			log.Printf("Error fetching %s: %v", ep.String(), err)
 			if err := slackNotify(*webhook, *channel, fmt.Sprintf("%s Error fetching %s: %v", *mention, ep.String(), err)); err != nil {
