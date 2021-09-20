@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,6 +83,11 @@ func main() {
 		}
 		da := req.URL.Host
 		if ep.addr != "" {
+			da = ep.addr
+		}
+		// this is a super hacky way to see if there's a port. if this fails
+		// assume not, and add one.
+		if _, _, err := net.SplitHostPort(da); err != nil {
 			p := req.URL.Port()
 			if p == "" {
 				if req.URL.Scheme == "https" {
@@ -89,7 +95,7 @@ func main() {
 				} else {
 					p = "80"
 				}
-				da = net.JoinHostPort(ep.addr, p)
+				da = net.JoinHostPort(da, p)
 			}
 		}
 		c := clientFor(da)
@@ -119,9 +125,13 @@ func main() {
 			}
 			continue
 		}
-		if resp.StatusCode >= 400 {
-			log.Printf("Error fetching %s: got status %d", ep.String(), resp.StatusCode)
-			if err := slackNotify(*webhook, *channel, fmt.Sprintf("%s Error fetching %s, got status %d", *mention, ep.String(), resp.StatusCode)); err != nil {
+		ws := ep.statusCode
+		if ws == 0 {
+			ws = http.StatusOK
+		}
+		if resp.StatusCode != ws {
+			log.Printf("Error fetching %s: want status %d, got status %d", ep.String(), ws, resp.StatusCode)
+			if err := slackNotify(*webhook, *channel, fmt.Sprintf("%s Error fetching %s, want status %d got status %d", *mention, ep.String(), ws, resp.StatusCode)); err != nil {
 				log.Printf("Error posting webhook: %v", err)
 			}
 			continue
@@ -201,6 +211,8 @@ type testEndpoint struct {
 	url *url.URL
 	// addr to direct the request to
 	addr string
+	// status code we expect
+	statusCode int
 }
 
 func (t *testEndpoint) String() string {
@@ -229,6 +241,13 @@ func parseEndpoints(f string) ([]testEndpoint, error) {
 				return nil, fmt.Errorf("parsing %s as query string: %v", sp[1], err)
 			}
 			e.addr = q.Get("addr")
+			if q.Get("status") != "" {
+				sc, err := strconv.Atoi(q.Get("status"))
+				if err != nil {
+					return nil, fmt.Errorf("converting %s to int: %v", q.Get("status"), err)
+				}
+				e.statusCode = sc
+			}
 		}
 		ret = append(ret, e)
 	}
